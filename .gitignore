@@ -1,0 +1,14 @@
+# descriptive / text files — intentionally untracked
+README.md
+config.example.json
+config.json
+*.md
+*.txt.orig
+
+# env
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.log
+.DS_Store
