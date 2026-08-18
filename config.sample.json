@@ -1,0 +1,7 @@
+{
+  "server_host": "your.server.host",
+  "server_port": 8090,
+  "target_url": "http://localhost:8080",
+  "token": null,
+  "tls": false
+}
