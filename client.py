@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 import asyncio
+import base64
 import json
 import os
+import pathlib
+import shutil
 import subprocess
 import time
 from collections import deque
@@ -44,9 +47,6 @@ def _shell_args(shell, command):
 
 
 class ProcManager:
-    """Tracks shell processes spawned via /system/exec so long-running ones
-    (dev servers, watchers) can be polled for output and killed by pid."""
-
     def __init__(self):
         self.procs = {}
 
@@ -86,9 +86,8 @@ class ProcManager:
         try:
             await asyncio.wait_for(asyncio.shield(wait_task), timeout=timeout)
         except asyncio.TimeoutError:
-            pass  # still running; caller can poll/kill it by pid
+            pass
         else:
-            # process exited; drain any output still sitting in the pipes
             await asyncio.gather(stdout_task, stderr_task)
         return self.output(pid)
 
@@ -207,6 +206,123 @@ async def handle_system_command(cmd):
     return result
 
 
+FILES_PREFIX = "/files/"
+
+
+def is_files_path(path):
+    return path.startswith(FILES_PREFIX)
+
+
+def _target_path(body):
+    p = body.get("path")
+    if not p:
+        raise ValueError("missing 'path'")
+    return pathlib.Path(p)
+
+
+def _read_file(body):
+    p = _target_path(body)
+    if not p.is_file():
+        raise FileNotFoundError(f"no such file: {p}")
+    raw = p.read_bytes()
+    encoding = body.get("encoding")
+    if encoding not in (None, "utf-8", "base64"):
+        raise ValueError("encoding must be 'utf-8' or 'base64'")
+    if encoding != "base64":
+        try:
+            return {"path": str(p), "content": raw.decode("utf-8"),
+                     "encoding": "utf-8", "size": len(raw)}
+        except UnicodeDecodeError:
+            if encoding == "utf-8":
+                raise
+    return {"path": str(p), "content": base64.b64encode(raw).decode("ascii"),
+             "encoding": "base64", "size": len(raw)}
+
+
+def _write_file(body):
+    p = _target_path(body)
+    content = body.get("content")
+    if content is None:
+        raise ValueError("missing 'content'")
+    encoding = body.get("encoding", "utf-8")
+    if encoding == "base64":
+        raw = base64.b64decode(content)
+    elif encoding == "utf-8":
+        raw = content.encode("utf-8")
+    else:
+        raise ValueError("encoding must be 'utf-8' or 'base64'")
+    if body.get("makedirs"):
+        p.parent.mkdir(parents=True, exist_ok=True)
+    mode = body.get("mode", "overwrite")
+    if mode == "append":
+        with open(p, "ab") as f:
+            f.write(raw)
+    elif mode == "overwrite":
+        p.write_bytes(raw)
+    else:
+        raise ValueError("mode must be 'overwrite' or 'append'")
+    return {"path": str(p), "bytes_written": len(raw), "mode": mode}
+
+
+def _delete_path(body):
+    p = _target_path(body)
+    if not p.exists():
+        raise FileNotFoundError(f"no such path: {p}")
+    if p.is_dir():
+        if not body.get("recursive"):
+            raise ValueError(f"'{p}' is a directory; pass recursive:true to delete it")
+        shutil.rmtree(p)
+        return {"path": str(p), "deleted": True, "was_dir": True}
+    p.unlink()
+    return {"path": str(p), "deleted": True, "was_dir": False}
+
+
+def _list_dir(body):
+    p = _target_path(body)
+    if not p.is_dir():
+        raise FileNotFoundError(f"no such directory: {p}")
+    entries = []
+    for child in p.iterdir():
+        st = child.stat()
+        entries.append({
+            "name": child.name,
+            "is_dir": child.is_dir(),
+            "size": st.st_size,
+            "modified": st.st_mtime,
+        })
+    return {"path": str(p), "entries": entries}
+
+
+async def handle_files_command(cmd):
+    result = {"id": cmd.get("id")}
+    method = str(cmd.get("method", "GET")).upper()
+    path = cmd.get("path", "/")
+    body = cmd.get("body") or {}
+    try:
+        if method == "GET" and path == "/files/read":
+            result["status"] = 200
+            result["body"] = _read_file(body)
+        elif method == "POST" and path == "/files/write":
+            result["status"] = 200
+            result["body"] = _write_file(body)
+        elif method == "POST" and path == "/files/delete":
+            result["status"] = 200
+            result["body"] = _delete_path(body)
+        elif method == "GET" and path == "/files/ls":
+            result["status"] = 200
+            result["body"] = _list_dir(body)
+        else:
+            result["status"] = 404
+            result["body"] = {"error": f"unknown files path: {method} {path}"}
+    except FileNotFoundError as e:
+        result["status"] = 404
+        result["body"] = {"error": str(e)}
+    except Exception as e:  # noqa: BLE001
+        result["status"] = None
+        result["error"] = f"{type(e).__name__}: {e}"
+    return result
+
+
 async def run_command(session, cmd):
     method = str(cmd.get("method", "GET")).upper()
     path = cmd.get("path", "/")
@@ -257,8 +373,11 @@ async def connect_once():
                         continue
                     print(f"[client] running {cmd.get('method')} {cmd.get('path')} "
                           f"(id={cmd.get('id')})")
-                    if is_system_path(cmd.get("path", "")):
+                    cmd_path = cmd.get("path", "")
+                    if is_system_path(cmd_path):
                         result = await handle_system_command(cmd)
+                    elif is_files_path(cmd_path):
+                        result = await handle_files_command(cmd)
                     else:
                         result = await run_command(session, cmd)
                     await ws.send_str(json.dumps(result))

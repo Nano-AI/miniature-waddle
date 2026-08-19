@@ -177,12 +177,15 @@ API_DOC = {
                 "GET  /system/proc",
                 "GET  /system/proc/{pid}/output",
                 "POST /system/proc/{pid}/kill",
+                "GET  /files/read    {path, encoding?: utf-8|base64}",
+                "POST /files/write   {path, content, encoding?, mode?: overwrite|append, makedirs?}",
+                "POST /files/delete  {path, recursive?}",
+                "GET  /files/ls      {path}",
             ],
         },
         "forwarded": {
             "description": "Any other path is issued as a plain HTTP request to TARGET_URL on "
-                            "the client machine — shaped by whatever that target app exposes "
-                            "(e.g. /api/files/ls, /api/files/write — see README).",
+                            "the client machine — shaped by whatever that target app exposes.",
         },
     },
 }
