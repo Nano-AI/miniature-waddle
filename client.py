@@ -2,6 +2,9 @@
 import asyncio
 import json
 import os
+import subprocess
+import time
+from collections import deque
 
 import aiohttp
 
@@ -26,6 +29,182 @@ SERVER_PORT = int(cfg("SERVER_PORT", "server_port", 8090))
 TARGET_URL = str(cfg("TARGET_URL", "target_url", "http://localhost:8080")).rstrip("/")
 TOKEN = cfg("AUTH_TOKEN", "token", None)
 SCHEME = "wss" if str(cfg("USE_TLS", "tls", "0")) in ("1", "true", "True") else "ws"
+
+SYSTEM_PREFIX = "/system/"
+ALLOWED_SHELLS = ("cmd", "powershell")
+MAX_OUTPUT_LINES = int(cfg("EXEC_MAX_LINES", "exec_max_lines", 2000))
+DEFAULT_EXEC_TIMEOUT = float(cfg("EXEC_DEFAULT_TIMEOUT", "exec_timeout", 30))
+_NO_WINDOW_FLAG = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def _shell_args(shell, command):
+    if shell == "powershell":
+        return ["powershell", "-NoProfile", "-NonInteractive", "-Command", command]
+    return ["cmd", "/c", command]
+
+
+class ProcManager:
+    """Tracks shell processes spawned via /system/exec so long-running ones
+    (dev servers, watchers) can be polled for output and killed by pid."""
+
+    def __init__(self):
+        self.procs = {}
+
+    async def spawn(self, shell, command, cwd, mode, timeout):
+        args = _shell_args(shell, command)
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            cwd=cwd or None,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            creationflags=_NO_WINDOW_FLAG,
+        )
+        pid = proc.pid
+        entry = {
+            "pid": pid,
+            "shell": shell,
+            "command": command,
+            "cwd": cwd,
+            "started_at": time.time(),
+            "proc": proc,
+            "stdout": deque(maxlen=MAX_OUTPUT_LINES),
+            "stderr": deque(maxlen=MAX_OUTPUT_LINES),
+            "running": True,
+            "exit_code": None,
+        }
+        self.procs[pid] = entry
+        stdout_task = asyncio.create_task(self._pump(entry, proc.stdout, "stdout"))
+        stderr_task = asyncio.create_task(self._pump(entry, proc.stderr, "stderr"))
+        wait_task = asyncio.create_task(self._wait(entry, proc))
+        entry["_stdout_task"] = stdout_task
+        entry["_stderr_task"] = stderr_task
+        entry["_wait_task"] = wait_task
+
+        if mode == "background":
+            return {"pid": pid, "running": True}
+
+        try:
+            await asyncio.wait_for(asyncio.shield(wait_task), timeout=timeout)
+        except asyncio.TimeoutError:
+            pass  # still running; caller can poll/kill it by pid
+        else:
+            # process exited; drain any output still sitting in the pipes
+            await asyncio.gather(stdout_task, stderr_task)
+        return self.output(pid)
+
+    async def _pump(self, entry, stream, key):
+        buf = entry[key]
+        while True:
+            line = await stream.readline()
+            if not line:
+                break
+            buf.append(line.decode(errors="replace"))
+
+    async def _wait(self, entry, proc):
+        code = await proc.wait()
+        entry["running"] = False
+        entry["exit_code"] = code
+
+    def output(self, pid):
+        entry = self.procs.get(pid)
+        if not entry:
+            return None
+        return {
+            "pid": pid,
+            "running": entry["running"],
+            "exit_code": entry["exit_code"],
+            "stdout": "".join(entry["stdout"]),
+            "stderr": "".join(entry["stderr"]),
+        }
+
+    async def kill(self, pid):
+        entry = self.procs.get(pid)
+        if not entry:
+            return {"pid": pid, "error": "unknown pid"}
+        if not entry["running"]:
+            return {"pid": pid, "killed": False, "already_exited": True,
+                     "exit_code": entry["exit_code"]}
+        if os.name == "nt":
+            k = await asyncio.create_subprocess_exec(
+                "taskkill", "/PID", str(pid), "/T", "/F",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            await k.communicate()
+        else:
+            entry["proc"].kill()
+        try:
+            await asyncio.wait_for(entry["_wait_task"], timeout=5)
+        except asyncio.TimeoutError:
+            pass
+        return {"pid": pid, "killed": True, "running": entry["running"],
+                "exit_code": entry["exit_code"]}
+
+    def list(self):
+        return [
+            {
+                "pid": pid,
+                "command": e["command"],
+                "shell": e["shell"],
+                "cwd": e["cwd"],
+                "running": e["running"],
+                "started_at": e["started_at"],
+                "exit_code": e["exit_code"],
+            }
+            for pid, e in self.procs.items()
+        ]
+
+
+proc_manager = ProcManager()
+
+
+def is_system_path(path):
+    return path.startswith(SYSTEM_PREFIX)
+
+
+async def handle_system_command(cmd):
+    result = {"id": cmd.get("id")}
+    method = str(cmd.get("method", "GET")).upper()
+    path = cmd.get("path", "/")
+    body = cmd.get("body") or {}
+    try:
+        if method == "POST" and path == "/system/exec":
+            shell = body.get("shell", "cmd")
+            if shell not in ALLOWED_SHELLS:
+                raise ValueError(f"shell must be one of {ALLOWED_SHELLS}")
+            command = body.get("command")
+            if not command:
+                raise ValueError("missing 'command'")
+            mode = body.get("mode", "wait")
+            if mode not in ("wait", "background"):
+                raise ValueError("mode must be 'wait' or 'background'")
+            timeout = float(body.get("timeout", DEFAULT_EXEC_TIMEOUT))
+            out = await proc_manager.spawn(shell, command, body.get("cwd"), mode, timeout)
+            result["status"] = 200
+            result["body"] = out
+
+        elif method == "GET" and path == "/system/proc":
+            result["status"] = 200
+            result["body"] = proc_manager.list()
+
+        elif method == "GET" and path.startswith("/system/proc/") and path.endswith("/output"):
+            pid = int(path.split("/")[3])
+            out = proc_manager.output(pid)
+            result["status"] = 200 if out is not None else 404
+            result["body"] = out if out is not None else {"error": "unknown pid"}
+
+        elif method == "POST" and path.startswith("/system/proc/") and path.endswith("/kill"):
+            pid = int(path.split("/")[3])
+            out = await proc_manager.kill(pid)
+            result["status"] = 404 if out.get("error") else 200
+            result["body"] = out
+
+        else:
+            result["status"] = 404
+            result["body"] = {"error": f"unknown system path: {method} {path}"}
+    except Exception as e:  # noqa: BLE001
+        result["status"] = None
+        result["error"] = f"{type(e).__name__}: {e}"
+    return result
 
 
 async def run_command(session, cmd):
@@ -78,7 +257,10 @@ async def connect_once():
                         continue
                     print(f"[client] running {cmd.get('method')} {cmd.get('path')} "
                           f"(id={cmd.get('id')})")
-                    result = await run_command(session, cmd)
+                    if is_system_path(cmd.get("path", "")):
+                        result = await handle_system_command(cmd)
+                    else:
+                        result = await run_command(session, cmd)
                     await ws.send_str(json.dumps(result))
                 elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                     break

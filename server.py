@@ -152,8 +152,45 @@ async def results_handler(request):
     return web.json_response(list(hub.results.values()))
 
 
+API_DOC = {
+    "service": "sockets_testing command relay",
+    "endpoints": [
+        {"method": "GET", "path": "/", "auth": False,
+         "description": "This document, plus live status."},
+        {"method": "GET", "path": "/ws", "auth": True,
+         "description": "WebSocket the remote client connects to. Not for direct use."},
+        {"method": "POST", "path": "/enqueue", "auth": True,
+         "description": "Queue a command for the connected client to run.",
+         "body": {"method": "HTTP method for the client to use", "path": "see enqueue_routing",
+                   "body": "optional JSON or string body", "headers": "optional dict"}},
+        {"method": "GET", "path": "/results", "auth": True,
+         "description": "List every recorded command result."},
+        {"method": "GET", "path": "/results/{id}", "auth": True,
+         "description": "Get one command result by id."},
+    ],
+    "enqueue_routing": {
+        "description": "The 'path' field of an /enqueue body decides how the client handles it.",
+        "client_local": {
+            "description": "Handled by client.py itself; never goes out as an HTTP call.",
+            "paths": [
+                "POST /system/exec  {shell: cmd|powershell, command, mode: wait|background, cwd, timeout}",
+                "GET  /system/proc",
+                "GET  /system/proc/{pid}/output",
+                "POST /system/proc/{pid}/kill",
+            ],
+        },
+        "forwarded": {
+            "description": "Any other path is issued as a plain HTTP request to TARGET_URL on "
+                            "the client machine — shaped by whatever that target app exposes "
+                            "(e.g. /api/files/ls, /api/files/write — see README).",
+        },
+    },
+}
+
+
 async def status_handler(request):
     return web.json_response({
+        **API_DOC,
         "client_connected": hub.client is not None,
         "queued": hub.pending.qsize(),
         "results": len(hub.results),
