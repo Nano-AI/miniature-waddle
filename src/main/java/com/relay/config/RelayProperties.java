@@ -2,6 +2,7 @@ package com.relay.config;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
@@ -9,6 +10,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+
+import jakarta.annotation.PostConstruct;
 
 @ConfigurationProperties(prefix = "relay")
 public class RelayProperties {
@@ -20,6 +23,8 @@ public class RelayProperties {
     private int maxLineChars = 8192;
     private long maxRequestBytes = 10_485_760L;
     private String authToken = "";
+    private String authTokenFile = "";
+    private volatile String resolvedToken;
     private List<String> allowedRoots = new ArrayList<>();
     private List<String> allowedOrigins = new ArrayList<>();
     private List<String> envBlocklist = new ArrayList<>(List.of(
@@ -81,6 +86,14 @@ public class RelayProperties {
         this.authToken = authToken;
     }
 
+    public String getAuthTokenFile() {
+        return authTokenFile;
+    }
+
+    public void setAuthTokenFile(String authTokenFile) {
+        this.authTokenFile = authTokenFile;
+    }
+
     public List<String> getAllowedRoots() {
         return allowedRoots;
     }
@@ -105,8 +118,29 @@ public class RelayProperties {
         this.envBlocklist = envBlocklist;
     }
 
+    @PostConstruct
+    public void resolveToken() {
+        String token = authToken == null ? "" : authToken;
+        if (authTokenFile != null && !authTokenFile.isBlank()) {
+            try {
+                token = Files.readString(Path.of(authTokenFile)).trim();
+            } catch (IOException e) {
+                throw new IllegalStateException("cannot read relay.auth-token-file: " + authTokenFile, e);
+            }
+        }
+        this.resolvedToken = token;
+    }
+
+    public String effectiveToken() {
+        if (resolvedToken == null) {
+            resolveToken();
+        }
+        return resolvedToken;
+    }
+
     public boolean hasAuthToken() {
-        return authToken != null && !authToken.isBlank();
+        String token = effectiveToken();
+        return token != null && !token.isBlank();
     }
 
     public boolean tokenMatches(String supplied) {
@@ -116,7 +150,7 @@ public class RelayProperties {
         if (supplied == null) {
             return false;
         }
-        byte[] a = authToken.getBytes(StandardCharsets.UTF_8);
+        byte[] a = effectiveToken().getBytes(StandardCharsets.UTF_8);
         byte[] b = supplied.getBytes(StandardCharsets.UTF_8);
         return MessageDigest.isEqual(a, b);
     }
