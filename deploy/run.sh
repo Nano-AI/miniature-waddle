@@ -8,6 +8,8 @@ PORT="${PORT:-8090}"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 JAR="$HERE/../build/libs/relay-server-1.0.0.jar"
+JAVA_BIN="java"
+if [ -n "${JAVA_HOME:-}" ]; then JAVA_BIN="$JAVA_HOME/bin/java"; fi
 
 if [ ! -f "$TOKEN_FILE" ]; then
     umask 177
@@ -20,7 +22,7 @@ echo "token file: $TOKEN_FILE"
 echo "listening : ${ADDRESS}:${PORT}"
 echo "base dir  : $BASE_DIR"
 
-exec java -jar "$JAR" \
+exec "$JAVA_BIN" -jar "$JAR" \
     --server.address="$ADDRESS" \
     --server.port="$PORT" \
     --relay.auth-token-file="$TOKEN_FILE" \

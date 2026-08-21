@@ -19,7 +19,9 @@ Write-Host "token file: $TokenFile"
 Write-Host "listening : ${Address}:${Port}"
 Write-Host "base dir  : $BaseDir"
 
-java -jar "$PSScriptRoot\..\build\libs\relay-server-1.0.0.jar" `
+$javaBin = if ($env:JAVA_HOME) { "$env:JAVA_HOME\bin\java.exe" } else { "java" }
+
+& $javaBin -jar "$PSScriptRoot\..\build\libs\relay-server-1.0.0.jar" `
     --server.address=$Address `
     --server.port=$Port `
     --relay.auth-token-file=$TokenFile `
