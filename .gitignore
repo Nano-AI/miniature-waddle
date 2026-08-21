@@ -1,14 +1,6 @@
-# descriptive / text files — intentionally untracked
-README.md
-config.example.json
-config.json
-*.md
-*.txt.orig
-
-# env
-.venv/
-venv/
-__pycache__/
-*.pyc
-*.log
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
 .DS_Store
+*.log
+*.md
