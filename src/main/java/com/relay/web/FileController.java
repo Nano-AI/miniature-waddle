@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.relay.files.FileService;
@@ -16,6 +17,7 @@ import com.relay.web.dto.MkdirRequest;
 import com.relay.web.dto.WriteRequest;
 
 @RestController
+@ConditionalOnProperty(name = "relay.mode", havingValue = "local", matchIfMissing = true)
 @RequestMapping("/api/files")
 public class FileController {
 

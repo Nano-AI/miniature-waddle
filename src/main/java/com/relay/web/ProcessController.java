@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.relay.process.ProcessManager;
@@ -16,6 +17,7 @@ import com.relay.web.dto.InputRequest;
 import com.relay.web.dto.StartRequest;
 
 @RestController
+@ConditionalOnProperty(name = "relay.mode", havingValue = "local", matchIfMissing = true)
 @RequestMapping("/api/proc")
 public class ProcessController {
 

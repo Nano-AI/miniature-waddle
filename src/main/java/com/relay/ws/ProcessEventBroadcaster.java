@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -16,6 +17,7 @@ import com.relay.process.OutputLine;
 import com.relay.process.ProcessEventPublisher;
 
 @Component
+@ConditionalOnProperty(name = "relay.mode", havingValue = "local", matchIfMissing = true)
 public class ProcessEventBroadcaster implements ProcessEventPublisher {
 
     private final Set<WebSocketSession> sessions = ConcurrentHashMap.newKeySet();

@@ -22,6 +22,9 @@ public class RelayProperties {
     private int maxOutputLines = 2000;
     private int maxLineChars = 8192;
     private long maxRequestBytes = 10_485_760L;
+    private String mode = "local";
+    private String hubUrl = "";
+    private long remoteTimeoutMs = 60000;
     private String authToken = "";
     private String authTokenFile = "";
     private volatile String resolvedToken;
@@ -76,6 +79,38 @@ public class RelayProperties {
 
     public void setMaxRequestBytes(long maxRequestBytes) {
         this.maxRequestBytes = maxRequestBytes;
+    }
+
+    public String getMode() {
+        return mode;
+    }
+
+    public void setMode(String mode) {
+        this.mode = mode;
+    }
+
+    public String getHubUrl() {
+        return hubUrl;
+    }
+
+    public void setHubUrl(String hubUrl) {
+        this.hubUrl = hubUrl;
+    }
+
+    public long getRemoteTimeoutMs() {
+        return remoteTimeoutMs;
+    }
+
+    public void setRemoteTimeoutMs(long remoteTimeoutMs) {
+        this.remoteTimeoutMs = remoteTimeoutMs;
+    }
+
+    public boolean isHub() {
+        return "hub".equalsIgnoreCase(mode);
+    }
+
+    public boolean isWorker() {
+        return "worker".equalsIgnoreCase(mode);
     }
 
     public String getAuthToken() {
