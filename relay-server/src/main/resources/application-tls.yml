@@ -1,0 +1,11 @@
+server:
+  ssl:
+    enabled: true
+    key-store: ${RELAY_KEYSTORE}
+    key-store-password: ${RELAY_KEYSTORE_PASSWORD}
+    key-store-type: PKCS12
+    key-alias: ${RELAY_KEY_ALIAS:relay}
+    client-auth: need
+    trust-store: ${RELAY_TRUSTSTORE}
+    trust-store-password: ${RELAY_TRUSTSTORE_PASSWORD}
+    trust-store-type: PKCS12

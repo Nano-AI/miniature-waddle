@@ -1,0 +1,25 @@
+server:
+  address: 127.0.0.1
+  port: 8090
+  tomcat:
+    max-swallow-size: 2MB
+    max-http-form-post-size: 2MB
+
+spring:
+  application:
+    name: relay-server
+
+relay:
+  base-dir: ""
+  npm-executable: ""
+  gradlew-executable: ""
+  max-output-lines: 2000
+  max-line-chars: 8192
+  max-request-bytes: 10485760
+  auth-token: ""
+  allowed-roots: []
+  allowed-origins: []
+
+logging:
+  level:
+    com.relay: INFO
